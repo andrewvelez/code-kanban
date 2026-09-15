@@ -14,7 +14,7 @@ function activate(context) {
     if (folders.length === 1) return folders[0];
     return vscode.window.showWorkspaceFolderPick({ placeHolder: 'Choose the repository for this board' });
   }
-  function attach(panel, folder) {
+  function attach(panel, folder, sidebar = false) {
     const key = folder.uri.toString();
     const directory = vscode.Uri.joinPath(context.storageUri, 'repositories', repositoryKey(key));
     const store = new StoryStore(directory.fsPath);
@@ -82,9 +82,9 @@ function activate(context) {
       disposed = true;
       clearTimeout(refreshTimer);
       disposables.forEach(disposable => disposable.dispose());
-      panels.delete(key);
+      if (!sidebar && panels.get(key) === panel) panels.delete(key);
     });
-    panels.set(key, panel);
+    if (!sidebar) panels.set(key, panel);
     const nonce = randomBytes(16).toString('hex');
     const script = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'board.js'));
     const css = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'board.css'));
@@ -115,6 +115,16 @@ function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand('code-kanban.open', () => report(() => open())),
     vscode.commands.registerCommand('code-kanban.addStory', () => report(() => open(true))),
+    vscode.window.registerWebviewViewProvider('code-kanban.boardView', {
+      async resolveWebviewView(view) {
+        const folder = await folderForBoard();
+        if (!folder) {
+          view.webview.html = '<!doctype html><html><body><p>Open a repository folder to use Code Kanban.</p></body></html>';
+          return;
+        }
+        attach(view, folder, true);
+      }
+    }, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.window.registerWebviewPanelSerializer('code-kanban.board', {
       async deserializeWebviewPanel(panel, state) {
         const folder = vscode.workspace.workspaceFolders?.find(item => item.uri.toString() === state?.repositoryUri);

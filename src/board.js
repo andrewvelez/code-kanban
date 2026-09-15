@@ -233,6 +233,7 @@ function renderCard(story) {
 }
 async function openNew(status = state.config.defaultStatus) { await closeEditor(); openEditor(null, status); }
 function openEditor(story, status) {
+  session?.titleObserver?.disconnect();
   editor?.destroy(); workspace.querySelector('.editor')?.remove();
   session = { story, dirty: false, version: 0, saving: null, timer: null, contentChanged: false };
   const current = session;
@@ -254,8 +255,21 @@ function openEditor(story, status) {
     property(label, key, input);
   }
   node.append(properties);
-  const content = el('div', 'editor-content'); current.title = el('input', 'story-title'); current.title.placeholder = 'Story title'; current.title.setAttribute('aria-label', 'Story title'); current.title.value = story ? title(story) : '';
-  current.title.addEventListener('input', () => { current.contentChanged = true; changed(current); }); content.append(current.title);
+  const content = el('div', 'editor-content'); current.title = el('textarea', 'story-title'); current.title.rows = 1; current.title.placeholder = 'Story title'; current.title.setAttribute('aria-label', 'Story title'); current.title.value = story ? title(story) : '';
+  function resizeTitle() {
+    current.title.style.height = 'auto';
+    current.title.style.height = `${current.title.scrollHeight}px`;
+  }
+  current.title.addEventListener('input', () => {
+    current.title.value = current.title.value.replace(/[\r\n]+/g, ' ');
+    resizeTitle(); current.contentChanged = true; changed(current);
+  });
+  current.title.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault(); current.editor.commands.focus();
+    }
+  });
+  content.append(current.title);
   const rich = el('div'); content.append(rich); node.append(content);
   const footer = el('footer', 'editor-footer'); footer.append(el('span', '', story ? 'Auto-saved · Ctrl/Cmd+Enter to close' : 'Esc or Ctrl/Cmd+Enter to save and close'), el('span', 'spacer'));
   if (story) footer.append(button(story.archived ? 'Restore story' : 'Archive story', 'archive', async () => { await closeEditor(); await request('flag', { number: story.number, field: 'archived', value: !story.archived }); }), button('Delete story', 'trash', async () => {
@@ -278,7 +292,14 @@ function openEditor(story, status) {
     onUpdate: () => { current.contentChanged = true; changed(current); }
   });
   current.editor = editor;
-  current.title.focus(); renderBoard();
+  let titleWidth;
+  current.titleObserver = new ResizeObserver(([entry]) => {
+    if (entry.contentRect.width !== titleWidth) {
+      titleWidth = entry.contentRect.width; resizeTitle();
+    }
+  });
+  current.titleObserver.observe(current.title);
+  resizeTitle(); current.title.focus(); renderBoard();
 }
 function changed(current) {
   current.dirty = true; current.version++; current.status.textContent = current.story ? 'Unsaved' : 'Draft';
@@ -321,6 +342,7 @@ async function flushEditor() {
 }
 function disposeEditor() {
   if (session) clearTimeout(session.timer);
+  session?.titleObserver?.disconnect();
   editor?.destroy(); editor = null; session = null;
   workspace.querySelector('.editor')?.remove(); renderBoard();
 }

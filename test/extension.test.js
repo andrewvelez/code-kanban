@@ -12,6 +12,7 @@ test('extension commands open one tab per repository and route Markdown writes u
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kanban-host-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const commands = new Map(), panels = [];
+  let sidebarProvider;
   const noop = { dispose() {} };
   const uri = file => ({ fsPath: file, scheme: 'file', toString: () => pathToFileURL(file).href });
   const folder = { name: 'example', uri: uri(path.join(root, 'repository')) };
@@ -27,6 +28,7 @@ test('extension commands open one tab per repository and route Markdown writes u
     window: {
       showInformationMessage: async () => {}, showErrorMessage: async error => { throw new Error(error); },
       registerWebviewPanelSerializer: () => noop,
+      registerWebviewViewProvider: (id, provider) => { assert.equal(id, 'code-kanban.boardView'); sidebarProvider = provider; return noop; },
       createWebviewPanel: () => {
         const events = new EventEmitter(), messages = [];
         const panel = { messages, events, reveal() {}, dispose() {}, onDidDispose: () => noop,
@@ -50,10 +52,10 @@ test('extension commands open one tab per repository and route Markdown writes u
   const panel = panels[0];
   assert.match(panel.webview.html, /Content-Security-Policy/);
   assert.match(panel.webview.html, /script-src 'nonce-/);
-  const send = async message => {
-    panel.events.emit('message', message);
+  const send = async (message, target = panel) => {
+    target.events.emit('message', message);
     for (let i = 0; i < 200; i++) {
-      const response = panel.messages.find(item => item.requestId === message.requestId && item.type === 'result');
+      const response = target.messages.find(item => item.requestId === message.requestId && item.type === 'result');
       if (response) { assert.equal(response.error, undefined); return response; }
       await new Promise(resolve => setTimeout(resolve, 5));
     }
@@ -64,6 +66,16 @@ test('extension commands open one tab per repository and route Markdown writes u
   const file = path.join(context.storageUri.fsPath, 'repositories', repositoryKey(folder.uri.toString()), 'STORY-0001.md');
   assert.match(await fs.readFile(file, 'utf8'), /# Host story/);
   await assert.rejects(fs.stat(folder.uri.fsPath), { code: 'ENOENT' });
+  const sidebar = vscode.window.createWebviewPanel();
+  panels.pop(); // The view is supplied by VS Code independently of editor panels.
+  await sidebarProvider.resolveWebviewView(sidebar);
+  const sidebarState = await send({ type: 'refresh', requestId: 2 }, sidebar);
+  assert.equal(sidebarState.stories[0].content, '# Host story');
+  await send({ type: 'create', requestId: 3, data: { status: 'todo', priority: 'high', labels: [], content: '# Sidebar story' } }, sidebar);
+  const tabState = await send({ type: 'refresh', requestId: 4 });
+  assert.equal(tabState.stories.length, 2);
+  await commands.get('code-kanban.open')();
+  assert.equal(panels.length, 1, 'sidebar must not replace the editor panel');
   context.storageUri = undefined;
   await commands.get('code-kanban.open')();
   assert.equal(panels.length, 1);

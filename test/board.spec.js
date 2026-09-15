@@ -136,3 +136,19 @@ test('capture reference layouts with representative stories', async ({ page }) =
   await expect(lane.locator('[data-status="todo"] [data-number="1"]')).toBeVisible();
   expect((await store.snapshot()).stories.find(s => s.number === 1).epic).toBe('Epic B');
 });
+
+test('long story titles wrap on opening, typing and resizing without changing Markdown headings', async ({ page }) => {
+  const title = 'A long story title that needs several lines to display every word in a narrow editor beside the Kanban board '.repeat(3).trim();
+  await store.create(data(`# ${title}\n\nDescription`));
+  await open(page); await page.locator('.card').click();
+  const field = page.getByLabel('Story title', { exact: true });
+  await expect(field).toHaveValue(title);
+  const fits = () => field.evaluate(node => node.clientHeight >= node.scrollHeight && node.clientHeight > 60);
+  await expect.poll(fits).toBe(true);
+  await page.setViewportSize({ width: 400, height: 800 });
+  await expect.poll(fits).toBe(true);
+  await field.fill(`${title} More words at the end.`);
+  await expect.poll(fits).toBe(true);
+  await expect(page.locator('.save-status')).toHaveText('Saved');
+  expect((await store.snapshot()).stories[0].content.split('\n')[0]).toBe(`# ${title} More words at the end.`);
+});

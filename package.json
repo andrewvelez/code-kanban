@@ -2,19 +2,66 @@
   "name": "code-kanban",
   "displayName": "Code Kanban",
   "description": "A repository-specific Markdown kanban board with numbered story cards.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "andrewvelez",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/andrewvelez/code-kanban.git" },
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other", "Visualization"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andrewvelez/code-kanban.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
   "main": "./dist/extension.cjs",
-  "activationEvents": ["onWebviewPanel:code-kanban.board"],
+  "activationEvents": [
+    "onWebviewPanel:code-kanban.board",
+    "onView:code-kanban.boardView"
+  ],
   "contributes": {
     "commands": [
-      { "command": "code-kanban.open", "title": "Open Kanban Board", "category": "Code Kanban" },
-      { "command": "code-kanban.addStory", "title": "New Story", "category": "Code Kanban" }
-    ]
+      {
+        "command": "code-kanban.open",
+        "title": "Open Kanban Board",
+        "category": "Code Kanban",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "code-kanban.addStory",
+        "title": "New Story",
+        "category": "Code Kanban"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "code-kanban",
+          "title": "Code Kanban",
+          "icon": "media/kanban.svg"
+        }
+      ]
+    },
+    "views": {
+      "code-kanban": [
+        {
+          "id": "code-kanban.boardView",
+          "name": "Kanban Board",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "code-kanban.open",
+          "when": "view == code-kanban.boardView",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node build.js",
