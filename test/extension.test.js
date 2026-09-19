@@ -11,7 +11,7 @@ const { repositoryKey } = require('../src/store');
 test('extension commands open one tab per repository and route Markdown writes under storageUri', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kanban-host-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const commands = new Map(), panels = [];
+  const commands = new Map(), panels = [], watchers = [];
   let sidebarProvider;
   const noop = { dispose() {} };
   const uri = file => ({ fsPath: file, scheme: 'file', toString: () => pathToFileURL(file).href });
@@ -21,7 +21,11 @@ test('extension commands open one tab per repository and route Markdown writes u
     RelativePattern: class {}, ViewColumn: { Active: 1, Beside: 2 },
     workspace: {
       workspaceFolders: [folder], isTrusted: true,
-      createFileSystemWatcher: () => ({ ...noop, onDidChange: () => noop, onDidCreate: () => noop, onDidDelete: () => noop }),
+      createFileSystemWatcher: () => {
+        const events = new EventEmitter(); watchers.push(events);
+        const on = name => callback => { events.on(name, callback); return { dispose: () => events.off(name, callback) }; };
+        return { dispose: () => events.removeAllListeners(), onDidChange: on('change'), onDidCreate: on('create'), onDidDelete: on('delete') };
+      },
       onDidSaveTextDocument: () => noop
     },
     commands: { registerCommand: (name, fn) => { commands.set(name, fn); return noop; } },
@@ -29,9 +33,13 @@ test('extension commands open one tab per repository and route Markdown writes u
       showInformationMessage: async () => {}, showErrorMessage: async error => { throw new Error(error); },
       registerWebviewPanelSerializer: () => noop,
       registerWebviewViewProvider: (id, provider) => { assert.equal(id, 'code-kanban.boardView'); sidebarProvider = provider; return noop; },
-      createWebviewPanel: () => {
+      createWebviewPanel: (type, title, column) => {
+        if (type) { assert.equal(type, 'code-kanban.board'); assert.equal(column, vscode.ViewColumn.Active); }
         const events = new EventEmitter(), messages = [];
-        const panel = { messages, events, reveal() {}, dispose() {}, onDidDispose: () => noop,
+        const panel = { messages, events, visible: true, reveals: 0,
+          reveal() { this.reveals++; }, dispose() { events.emit('dispose'); },
+          onDidDispose: callback => { events.on('dispose', callback); return noop; },
+          onDidChangeVisibility: callback => { events.on('visibility', callback); return { dispose: () => events.off('visibility', callback) }; },
           webview: { asWebviewUri: uri => uri.toString(), cspSource: 'vscode-webview:',
             postMessage: async message => { messages.push(message); return true; },
             onDidReceiveMessage: callback => { events.on('message', callback); return { dispose: () => events.off('message', callback) }; }
@@ -47,7 +55,15 @@ test('extension commands open one tab per repository and route Markdown writes u
   try { ({ activate } = require('../src/extension')); } finally { Module._load = load; }
   const context = { subscriptions: [], extensionUri: uri(path.resolve(__dirname, '..')), storageUri: uri(path.join(root, 'storage')) };
   activate(context);
-  await commands.get('code-kanban.open')(); await commands.get('code-kanban.open')();
+  t.after(() => context.subscriptions.forEach(item => item.dispose()));
+  const sidebar = vscode.window.createWebviewPanel();
+  panels.pop(); // VS Code supplies sidebar views independently of editor panels.
+  t.after(() => sidebar.dispose());
+  await sidebarProvider.resolveWebviewView(sidebar);
+  assert.equal(panels.length, 1, 'first Activity Bar activation opens an editor tab');
+  assert.match(sidebar.webview.html, /dist\/sidebar.js/);
+  assert.doesNotMatch(sidebar.webview.html, /dist\/board.js/);
+  await commands.get('code-kanban.open')();
   assert.equal(panels.length, 1);
   const panel = panels[0];
   assert.match(panel.webview.html, /Content-Security-Policy/);
@@ -66,17 +82,47 @@ test('extension commands open one tab per repository and route Markdown writes u
   const file = path.join(context.storageUri.fsPath, 'repositories', repositoryKey(folder.uri.toString()), 'STORY-0001.md');
   assert.match(await fs.readFile(file, 'utf8'), /# Host story/);
   await assert.rejects(fs.stat(folder.uri.fsPath), { code: 'ENOENT' });
-  const sidebar = vscode.window.createWebviewPanel();
-  panels.pop(); // The view is supplied by VS Code independently of editor panels.
-  await sidebarProvider.resolveWebviewView(sidebar);
-  const sidebarState = await send({ type: 'refresh', requestId: 2 }, sidebar);
-  assert.equal(sidebarState.stories[0].content, '# Host story');
-  await send({ type: 'create', requestId: 3, data: { status: 'todo', priority: 'high', labels: [], content: '# Sidebar story' } }, sidebar);
-  const tabState = await send({ type: 'refresh', requestId: 4 });
-  assert.equal(tabState.stories.length, 2);
+  const until = async predicate => {
+    for (let i = 0; i < 200; i++) {
+      if (predicate()) return;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.fail('Expected extension event did not arrive');
+  };
+  // A sidebar action must survive an editor that has not loaded yet.
+  sidebar.events.emit('message', { type: 'newStory' });
+  await until(() => panel.reveals === 2);
+  assert.equal(panel.messages.some(message => message.type === 'newStory'), false);
+  panel.events.emit('message', { type: 'ready' });
+  await until(() => panel.messages.some(message => message.type === 'newStory'));
+  assert.ok(panel.messages.findIndex(message => message.type === 'snapshot') < panel.messages.findIndex(message => message.type === 'newStory'));
+  sidebar.events.emit('message', { type: 'ready' });
+  await until(() => sidebar.messages.some(message => message.type === 'snapshot'));
+  assert.equal(sidebar.messages.find(message => message.type === 'snapshot').stories[0].content, '# Host story');
+  const before = panel.reveals;
+  sidebar.visible = false; sidebar.events.emit('visibility');
+  assert.equal(panel.reveals, before, 'hiding the sidebar must not reveal the board');
+  sidebar.visible = true; sidebar.events.emit('visibility');
+  await until(() => panel.reveals === before + 1);
+  assert.equal(panels.length, 1, 'returning to the Activity Bar reuses the editor');
+  // Sidebar actions retain their repository even in a multi-root workspace.
+  vscode.workspace.workspaceFolders.push({ name: 'other', uri: uri(path.join(root, 'other')) });
+  vscode.window.showWorkspaceFolderPick = () => { throw new Error('Sidebar must not reprompt for its repository'); };
+  sidebar.events.emit('message', { type: 'openStory', number: 1 });
+  await until(() => panel.messages.some(message => message.type === 'openStory' && message.number === 1));
+  vscode.workspace.workspaceFolders.pop();
+  await send({ type: 'create', requestId: 3, data: { status: 'in-progress', priority: 'high', labels: [], content: '# Another story' } });
+  for (const watcher of watchers) watcher.emit('change');
+  await until(() => sidebar.messages.some(message => message.type === 'snapshot' && message.stories.length === 2));
+  panel.dispose();
+  assert.equal(sidebar.messages.at(-1).open, false, 'overview offers reopening when the tab closes');
+  sidebar.visible = false; sidebar.events.emit('visibility');
+  sidebar.visible = true; sidebar.events.emit('visibility');
+  await until(() => panels.length === 2);
+  assert.equal(sidebar.messages.at(-1).open, true);
   await commands.get('code-kanban.open')();
-  assert.equal(panels.length, 1, 'sidebar must not replace the editor panel');
+  assert.equal(panels.length, 2, 'only one replacement tab is created');
   context.storageUri = undefined;
   await commands.get('code-kanban.open')();
-  assert.equal(panels.length, 1);
+  assert.equal(panels.length, 2);
 });

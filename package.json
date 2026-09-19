@@ -2,7 +2,7 @@
   "name": "code-kanban",
   "displayName": "Code Kanban",
   "description": "A repository-specific Markdown kanban board with numbered story cards.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "andrewvelez",
   "license": "MIT",
   "repository": {
@@ -48,7 +48,7 @@
       "code-kanban": [
         {
           "id": "code-kanban.boardView",
-          "name": "Kanban Board",
+          "name": "Overview",
           "type": "webview"
         }
       ]

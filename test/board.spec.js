@@ -40,6 +40,16 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(async () => { if (root) await fs.rm(root, { recursive: true, force: true }); expect(errors || []).toEqual([]); });
 async function open(page) { await page.goto('http://board.test/'); await expect(page.locator('.column')).toHaveCount(5); }
 async function refresh(page) { const snapshot = await store.snapshot(); await page.evaluate(data => window.dispatchEvent(new MessageEvent('message', { data: { type: 'snapshot', ...data } })), snapshot); }
+test('sidebar story action opens the requested story and saves the current draft', async ({ page }) => {
+  await store.create(data('# First story', 'in-progress'));
+  await store.create(data('# Second story', 'in-progress'));
+  await open(page);
+  await page.getByRole('button', { name: 'Story #1: First story', exact: true }).click();
+  await page.getByLabel('Story title', { exact: true }).fill('Edited first story');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'openStory', number: 2 } })));
+  await expect(page.getByLabel('Story title', { exact: true })).toHaveValue('Second story');
+  expect((await store.snapshot()).stories.find(story => story.number === 1).content).toContain('# Edited first story');
+});
 test('create numbered Markdown story, edit with autosave, and retain across reload', async ({ page }) => {
   await open(page);
   await page.keyboard.press('n');

@@ -96,6 +96,7 @@ window.addEventListener('message', event => {
   const message = event.data;
   if (message.type === 'snapshot') accept(message);
   if (message.type === 'newStory') { if (state) openNew().catch(showError); else pendingNew = true; }
+  if (message.type === 'openStory') openStory(message.number).catch(showError);
   if (message.type === 'error') showError(message.message);
   if (message.type === 'result') {
     const waiting = pending.get(message.requestId); pending.delete(message.requestId);
@@ -103,6 +104,14 @@ window.addEventListener('message', event => {
     else { accept(message); waiting?.resolve(message); }
   }
 });
+async function openStory(number) {
+  await closeEditor();
+  const response = await request('refresh');
+  const story = response.stories.find(item => item.number === number && !item.deleted);
+  if (!story) throw new Error(`Story #${number} is no longer available.`);
+  if (state.config.markdownEditorMode) await request('openFile', { number });
+  else openEditor(story);
+}
 function init() {
   app.replaceChildren();
   toolbar = el('header', 'toolbar'); toolbar.setAttribute('aria-label', 'Board filters');

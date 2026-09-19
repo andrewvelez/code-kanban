@@ -1,10 +1,11 @@
 const vscode = require('vscode');
 const { randomBytes } = require('node:crypto');
-const fs = require('node:fs/promises');
 const { StoryStore, repositoryKey } = require('./store');
 
 function activate(context) {
   const panels = new Map();
+  const overviews = new Map();
+  const pendingActions = new Map();
   async function folderForBoard() {
     const folders = vscode.workspace.workspaceFolders;
     if (!context.storageUri || !folders?.length) {
@@ -21,10 +22,10 @@ function activate(context) {
     const disposables = [];
     let disposed = false;
     let refreshTimer;
-    panel.title = `Kanban · ${folder.name}`;
+    panel.title = `${sidebar ? 'Overview' : 'Kanban'} · ${folder.name}`;
     panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist'), vscode.Uri.joinPath(context.extensionUri, 'media')] };
     const send = message => !disposed && panel.webview.postMessage(message);
-    const snapshot = async () => send({ type: 'snapshot', ...(await store.snapshot()), repository: folder.name, repositoryUri: key });
+    const snapshot = async () => send({ type: 'snapshot', ...(await store.snapshot()), repository: folder.name, repositoryUri: key, boardOpen: panels.has(key) });
     let queue = Promise.resolve();
     const schedule = task => {
       queue = queue.then(task).catch(error => {
@@ -37,7 +38,14 @@ function activate(context) {
         let result;
         try {
           switch (message.type) {
-            case 'ready': await snapshot(); return;
+            case 'ready':
+              await snapshot();
+              for (const action of pendingActions.get(panel) || []) await send(action);
+              pendingActions.delete(panel);
+              return;
+            case 'openBoard': await open(false, folder); return;
+            case 'newStory': await open(true, folder); return;
+            case 'openStory': await open(false, folder, message.number); return;
             case 'create': result = await store.create(message.data); break;
             case 'update': await store.update(message.number, message.data, message.revision); break;
             case 'move': await store.move(message.number, message.status, message.beforeNumber, message.epic); break;
@@ -82,33 +90,36 @@ function activate(context) {
       disposed = true;
       clearTimeout(refreshTimer);
       disposables.forEach(disposable => disposable.dispose());
-      if (!sidebar && panels.get(key) === panel) panels.delete(key);
+      pendingActions.delete(panel);
+      if (sidebar && overviews.get(key) === panel) overviews.delete(key);
+      if (!sidebar && panels.get(key) === panel) {
+        panels.delete(key);
+        overviews.get(key)?.webview.postMessage({ type: 'boardOpenChanged', open: false });
+      }
     });
-    if (!sidebar) panels.set(key, panel);
+    if (sidebar) overviews.set(key, panel);
+    else { panels.set(key, panel); pendingActions.set(panel, []); }
     const nonce = randomBytes(16).toString('hex');
-    const script = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', 'board.js'));
-    const css = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'board.css'));
+    const script = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'dist', sidebar ? 'sidebar.js' : 'board.js'));
+    const css = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', sidebar ? 'sidebar.css' : 'board.css'));
     panel.webview.html = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${panel.webview.cspSource} data:; style-src ${panel.webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${css}"><title>Code Kanban</title></head><body><main id="app" aria-label="Kanban board"><p>Loading board…</p></main><script nonce="${nonce}" src="${script}"></script></body></html>`;
     return panel;
   }
-  async function open(addStory = false) {
-    const folder = await folderForBoard();
+  async function open(addStory = false, folder, number) {
+    folder ||= await folderForBoard();
     if (!folder) return;
     const key = folder.uri.toString();
     let panel = panels.get(key);
     if (!panel) {
-      await fs.mkdir(context.storageUri.fsPath, { recursive: true });
       panel = attach(vscode.window.createWebviewPanel('code-kanban.board', 'Kanban', vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true }), folder);
-      // The UI reads this state only after its initial snapshot arrives.
-      if (addStory) {
-        const ready = panel.webview.onDidReceiveMessage(message => {
-          if (message.type === 'ready') { panel.webview.postMessage({ type: 'newStory' }); ready.dispose(); }
-        });
-        context.subscriptions.push(ready);
-      }
     } else {
       panel.reveal();
-      if (addStory) panel.webview.postMessage({ type: 'newStory' });
+    }
+    overviews.get(key)?.webview.postMessage({ type: 'boardOpenChanged', open: true });
+    const action = addStory ? { type: 'newStory' } : number != null ? { type: 'openStory', number } : null;
+    if (action) {
+      if (pendingActions.has(panel)) pendingActions.get(panel).push(action);
+      else panel.webview.postMessage(action);
     }
   }
   const report = action => action().catch(error => vscode.window.showErrorMessage(`Code Kanban: ${error.message}`));
@@ -123,6 +134,11 @@ function activate(context) {
           return;
         }
         attach(view, folder, true);
+        const visibility = view.onDidChangeVisibility(() => {
+          if (view.visible) return report(() => open(false, folder));
+        });
+        view.onDidDispose(() => visibility.dispose());
+        await report(() => open(false, folder));
       }
     }, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.window.registerWebviewPanelSerializer('code-kanban.board', {
