@@ -1,7 +1,7 @@
 # Code Kanban
 
 A VS Code kanban board with permanent, numbered story cards. Built with vanilla
-JavaScript; no React or TypeScript source. The board opens in its own editor tab or in the Activity Bar sidebar.
+JavaScript; no React or TypeScript source. The board opens in its own editor tab, with an overview in the primary sidebar.
 The layout and interactions are based on [Kanban Markdown](https://github.com/LachyFS/kanban-markdown-vscode-extension).
 
 ![Board](docs/board.png)
@@ -21,14 +21,16 @@ To install locally:
 
 ```sh
 npm run package
-code --install-extension code-kanban-0.2.0.vsix
+code --install-extension code-kanban-1.0.0.vsix
 ```
 
 ## Board
 
-Click the **Code Kanban** icon in the Activity Bar for the sidebar board. Its
-**Open Kanban Board** title action opens the editor tab. Both views share the
-same repository data. Story titles wrap and expand automatically in the editor.
+Click the **Code Kanban** icon in the Activity Bar to open or reveal the board
+editor tab. The primary sidebar shows column counts, in-progress stories, and
+**Open Kanban Board** / **New Story** actions. Click an in-progress story to edit
+it in the board. The overview follows the same repository and updates with its
+data. Story titles wrap and expand automatically in the editor.
 
 - Backlog, To Do, In Progress, Review, Done; editable column names and colors.
 - Drag cards between columns or onto another card to insert before it.
