@@ -21,7 +21,7 @@ To install locally:
 
 ```sh
 npm run package
-code --install-extension code-kanban-0.2.1.vsix
+code --install-extension code-kanban-1.0.0.vsix
 ```
 
 ## Board

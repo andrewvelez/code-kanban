@@ -2,7 +2,7 @@
   "name": "code-kanban",
   "displayName": "Code Kanban",
   "description": "A repository-specific Markdown kanban board with numbered story cards.",
-  "version": "0.2.1",
+  "version": "1.0.0",
   "publisher": "andrewvelez",
   "license": "MIT",
   "repository": {
